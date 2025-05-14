@@ -3,7 +3,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 import json
 
-from .models import Event, Session, FeatureFlag, EventAggregate
+from .models import Event, Session, FeatureFlag, EventAggregate, DeviceInfo, LocationInfo
 
 
 class JSONFieldPrettifyMixin:
@@ -23,26 +23,52 @@ class JSONFieldPrettifyMixin:
             return str(value)
 
 
+@admin.register(DeviceInfo)
+class DeviceInfoAdmin(admin.ModelAdmin):
+    list_display = ('device_id', 'os_name', 'os_version', 'app_version', 'is_simulator', 'is_rooted_device', 'is_vpn_enabled', 'last_seen')
+    list_filter = ('os_name', 'app_version', 'is_simulator', 'is_rooted_device', 'is_vpn_enabled')
+    search_fields = ('device_id', 'os_name', 'os_version', 'app_version')
+    readonly_fields = ('last_seen',)
+
+
+@admin.register(LocationInfo)
+class LocationInfoAdmin(admin.ModelAdmin):
+    list_display = ('ip_address', 'city', 'country', 'continent')
+    list_filter = ('country', 'continent')
+    search_fields = ('ip_address', 'city', 'country')
+
+
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin, JSONFieldPrettifyMixin):
-    list_display = ('event_type', 'distinct_id', 'timestamp', 'processed', 'device_id', 'country', 'city', 'app_check_result')
-    list_filter = ('event_type', 'processed', 'os_name', 'app_version', 'country', 'is_simulator', 'is_rooted_device', 'is_vpn_enabled', 'app_check_result')
-    search_fields = ('distinct_id', 'event_type', 'device_id', 'city', 'country')
+    list_display = ('event_type', 'distinct_id', 'timestamp', 'processed', 'get_device_id', 'get_country', 'app_check_result')
+    list_filter = ('event_type', 'processed', 'app_check_result', 'device__os_name', 'device__is_simulator', 'device__is_rooted_device', 'device__is_vpn_enabled', 'location__country')
+    search_fields = ('distinct_id', 'event_type', 'device__device_id', 'location__city', 'location__country')
     readonly_fields = ('id', 'created_at', 'properties_pretty')
     date_hierarchy = 'timestamp'
+    raw_id_fields = ('device', 'location', 'session', 'user')
+    
+    def get_device_id(self, obj):
+        return obj.device.device_id if obj.device else "-"
+    get_device_id.short_description = "Device ID"
+    get_device_id.admin_order_field = "device__device_id"
+    
+    def get_country(self, obj):
+        return obj.location.country if obj.location else "-"
+    get_country.short_description = "Country"
+    get_country.admin_order_field = "location__country"
     
     fieldsets = (
         (None, {
-            'fields': ('id', 'event_type', 'distinct_id', 'properties_pretty', 'timestamp')
+            'fields': ('id', 'event_type', 'distinct_id', 'properties_pretty', 'timestamp', 'session')
         }),
         ('Device Information', {
-            'fields': ('device_id', 'app_version', 'os_name', 'os_version', 'ip_address')
-        }),
-        ('Device Status', {
-            'fields': ('is_simulator', 'is_rooted_device', 'is_vpn_enabled', 'app_check_result')
+            'fields': ('device',)
         }),
         ('Location Information', {
-            'fields': ('latitude', 'longitude', 'city', 'country', 'continent')
+            'fields': ('location', 'latitude', 'longitude')
+        }),
+        ('Security', {
+            'fields': ('app_check_result',)
         }),
         ('Processing Status', {
             'fields': ('processed', 'created_at', 'user')
@@ -57,24 +83,35 @@ class EventAdmin(admin.ModelAdmin, JSONFieldPrettifyMixin):
 
 @admin.register(Session)
 class SessionAdmin(admin.ModelAdmin):
-    list_display = ('distinct_id', 'start_time', 'end_time', 'duration_display', 'events_count', 'country', 'city', 'app_check_result')
-    list_filter = ('os_name', 'app_version', 'country', 'is_simulator', 'is_rooted_device', 'is_vpn_enabled', 'app_check_result')
-    search_fields = ('distinct_id', 'device_id', 'city', 'country')
-    readonly_fields = ('id', 'duration')
+    list_display = ('distinct_id', 'start_time', 'end_time', 'duration_display', 'events_count', 'get_device_id', 'get_country', 'app_check_result')
+    list_filter = ('device__os_name', 'device__app_version', 'location__country', 'device__is_simulator', 'device__is_rooted_device', 'device__is_vpn_enabled', 'app_check_result')
+    search_fields = ('distinct_id', 'device__device_id', 'location__city', 'location__country')
+    readonly_fields = ('id', 'duration', 'events_count')
     date_hierarchy = 'start_time'
+    raw_id_fields = ('device', 'location', 'user')
+    
+    def get_device_id(self, obj):
+        return obj.device.device_id if obj.device else "-"
+    get_device_id.short_description = "Device ID"
+    get_device_id.admin_order_field = "device__device_id"
+    
+    def get_country(self, obj):
+        return obj.location.country if obj.location else "-"
+    get_country.short_description = "Country"
+    get_country.admin_order_field = "location__country"
     
     fieldsets = (
         (None, {
             'fields': ('id', 'distinct_id', 'start_time', 'end_time', 'duration', 'events_count')
         }),
         ('Device Information', {
-            'fields': ('device_id', 'app_version', 'os_name', 'os_version', 'ip_address')
-        }),
-        ('Device Status', {
-            'fields': ('is_simulator', 'is_rooted_device', 'is_vpn_enabled', 'app_check_result')
+            'fields': ('device',)
         }),
         ('Location Information', {
-            'fields': ('latitude', 'longitude', 'city', 'country', 'continent')
+            'fields': ('location', 'latitude', 'longitude')
+        }),
+        ('Security', {
+            'fields': ('app_check_result',)
         }),
         ('User Information', {
             'fields': ('user',)

@@ -4,48 +4,47 @@ from django.utils import timezone
 from apps.users.models import User
 
 
-class Event(models.Model):
+class DeviceInfo(models.Model):
     """
-    Stores event data captured from mobile applications.
+    Stores device information that rarely changes to reduce redundancy.
     """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    distinct_id = models.CharField(max_length=200, help_text="Anonymous user identifier")
-    event_type = models.CharField(max_length=100, db_index=True)
-    properties = models.JSONField(default=dict, help_text="Event properties in JSON format")
-    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
-    device_id = models.CharField(max_length=100)
+    device_id = models.CharField(max_length=100, primary_key=True)
     app_version = models.CharField(max_length=50)
     os_name = models.CharField(max_length=50)
     os_version = models.CharField(max_length=50)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
     is_simulator = models.BooleanField(null=True, blank=True, help_text="Whether the device is a simulator/emulator")
     is_rooted_device = models.BooleanField(null=True, blank=True, help_text="Whether the device is rooted/jailbroken")
     is_vpn_enabled = models.BooleanField(null=True, blank=True, help_text="Whether a VPN is active on the device")
-    latitude = models.FloatField(null=True, blank=True, help_text="Latitude of the device location")
-    longitude = models.FloatField(null=True, blank=True, help_text="Longitude of the device location")
+    last_seen = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.device_id} - {self.os_name} {self.os_version}"
+    
+    class Meta:
+        verbose_name = "Device Information"
+        verbose_name_plural = "Device Information"
+
+
+class LocationInfo(models.Model):
+    """
+    Stores location information to reduce redundancy.
+    """
+    id = models.AutoField(primary_key=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True, unique=True)
     city = models.CharField(max_length=100, null=True, blank=True, help_text="City based on IP geolocation")
     country = models.CharField(max_length=100, null=True, blank=True, help_text="Country based on IP geolocation")
     continent = models.CharField(max_length=100, null=True, blank=True, help_text="Continent based on IP geolocation")
-    app_check_result = models.BooleanField(null=True, blank=True, help_text="Result of Firebase App Check verification")
-    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, 
-                            help_text="Associated user if identified")
-    processed = models.BooleanField(default=False, help_text="Whether this event has been processed")
-    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.ip_address} - {self.city}, {self.country}"
     
     class Meta:
+        verbose_name = "Location Information"
+        verbose_name_plural = "Location Information"
         indexes = [
-            models.Index(fields=['distinct_id']),
-            models.Index(fields=['event_type']),
-            models.Index(fields=['timestamp']),
-            models.Index(fields=['device_id']),
-            models.Index(fields=['processed']),
             models.Index(fields=['country']),
             models.Index(fields=['city']),
         ]
-        ordering = ['-timestamp']
-    
-    def __str__(self):
-        return f"{self.event_type} - {self.distinct_id} - {self.timestamp}"
 
 
 class Session(models.Model):
@@ -54,33 +53,22 @@ class Session(models.Model):
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     distinct_id = models.CharField(max_length=200, db_index=True)
-    device_id = models.CharField(max_length=100)
+    device = models.ForeignKey(DeviceInfo, on_delete=models.PROTECT, related_name='sessions', null=True, blank=True)
     start_time = models.DateTimeField(db_index=True)
     end_time = models.DateTimeField(null=True, blank=True)
     duration = models.DurationField(null=True, blank=True)
     events_count = models.IntegerField(default=0)
     user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
-    app_version = models.CharField(max_length=50)
-    os_name = models.CharField(max_length=50)
-    os_version = models.CharField(max_length=50)
-    is_simulator = models.BooleanField(null=True, blank=True, help_text="Whether the device is a simulator/emulator")
-    is_rooted_device = models.BooleanField(null=True, blank=True, help_text="Whether the device is rooted/jailbroken")
-    is_vpn_enabled = models.BooleanField(null=True, blank=True, help_text="Whether a VPN is active on the device")
+    # Location can change during a session (e.g. mobile user moving)
+    location = models.ForeignKey(LocationInfo, null=True, blank=True, on_delete=models.SET_NULL, related_name='sessions')
     latitude = models.FloatField(null=True, blank=True, help_text="Latitude of the device location")
     longitude = models.FloatField(null=True, blank=True, help_text="Longitude of the device location")
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    city = models.CharField(max_length=100, null=True, blank=True, help_text="City based on IP geolocation")
-    country = models.CharField(max_length=100, null=True, blank=True, help_text="Country based on IP geolocation")
-    continent = models.CharField(max_length=100, null=True, blank=True, help_text="Continent based on IP geolocation")
     app_check_result = models.BooleanField(null=True, blank=True, help_text="Result of Firebase App Check verification")
     
     class Meta:
         indexes = [
             models.Index(fields=['distinct_id']),
             models.Index(fields=['start_time']),
-            models.Index(fields=['device_id']),
-            models.Index(fields=['country']),
-            models.Index(fields=['city']),
         ]
         ordering = ['-start_time']
     
@@ -92,6 +80,42 @@ class Session(models.Model):
             self.duration = self.end_time - self.start_time
             return self.duration
         return None
+
+
+class Event(models.Model):
+    """
+    Stores event data captured from mobile applications.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name='events', null=True, blank=True)
+    distinct_id = models.CharField(max_length=200, help_text="Anonymous user identifier")
+    event_type = models.CharField(max_length=100, db_index=True)
+    properties = models.JSONField(default=dict, help_text="Event properties in JSON format")
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
+    # We can still reference the device directly for events without sessions
+    device = models.ForeignKey(DeviceInfo, on_delete=models.PROTECT, related_name='events', null=True, blank=True)
+    # Location can change during a session (e.g. mobile user moving)
+    location = models.ForeignKey(LocationInfo, null=True, blank=True, on_delete=models.SET_NULL, related_name='events')
+    # Fields that remain in the model
+    latitude = models.FloatField(null=True, blank=True, help_text="Latitude of the device location")
+    longitude = models.FloatField(null=True, blank=True, help_text="Longitude of the device location")
+    app_check_result = models.BooleanField(null=True, blank=True, help_text="Result of Firebase App Check verification")
+    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, 
+                            help_text="Associated user if identified")
+    processed = models.BooleanField(default=False, help_text="Whether this event has been processed")
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['distinct_id']),
+            models.Index(fields=['event_type']),
+            models.Index(fields=['timestamp']),
+            models.Index(fields=['processed']),
+        ]
+        ordering = ['-timestamp']
+    
+    def __str__(self):
+        return f"{self.event_type} - {self.distinct_id} - {self.timestamp}"
 
 
 class FeatureFlag(models.Model):
